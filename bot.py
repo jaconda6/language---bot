@@ -7,11 +7,10 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from openai import OpenAI
-import edge_tts  # Библиотека для озвучки
 from pydub import AudioSegment
 
 # ---------- 🔑 ТВОИ ТОКЕНЫ (НЕ ДЕЛИСЬ ЭТИМ ФАЙЛОМ!) ----------
@@ -24,22 +23,13 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mysecret")
 
-# Доступные языки (коды для edge-tts)
+# Доступные языки
 LANGUAGES = {
     "🇩🇰 Dansk": "da",
     "🇳🇱 Nederlands": "nl",
     "🇬🇧 English": "en",
     "🇨🇳 中文 (简体)": "zh",
     "🇪🇸 Español": "es"
-}
-
-# Голоса для edge-tts (можно будет расширить)
-VOICES = {
-    "da": "da-DK-ChristelNeural",
-    "nl": "nl-NL-ColetteNeural",
-    "en": "en-US-JennyNeural",
-    "zh": "zh-CN-XiaoxiaoNeural",
-    "es": "es-ES-ElviraNeural"
 }
 
 user_languages = {}
@@ -94,16 +84,6 @@ async def get_ai_response(user_id: int, user_text: str) -> str:
         logging.error(f"OpenRouter error: {e}")
         return "Sorry, I had a problem thinking. Try again."
 
-async def text_to_speech(text: str, lang_code: str) -> io.BytesIO:
-    voice = VOICES.get(lang_code, VOICES["en"])
-    communicate = edge_tts.Communicate(text, voice)
-    mp3_fp = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            mp3_fp.write(chunk["data"])
-    mp3_fp.seek(0)
-    return mp3_fp
-
 # ---------- ОБРАБОТЧИКИ СООБЩЕНИЙ ----------
 @dp.message(Command("start", "new"))
 async def start_handler(message: types.Message):
@@ -124,8 +104,8 @@ async def start_handler(message: types.Message):
         ])
         await message.answer(
             f"👋 Ты изучаешь {lang_name}.\n"
-            "Напиши мне что-нибудь на этом языке.\n"
-            "Я отвечу текстом и голосом!\n\n"
+            "Напиши мне что-нибудь на этом языке или отправь голосовое сообщение.\n"
+            "Я отвечу текстом!\n\n"
             "/new — начать заново\n"
             "/explain — объяснить по-русски\n"
             "/language — сменить язык",
@@ -152,7 +132,7 @@ async def set_language(call: types.CallbackQuery):
         [InlineKeyboardButton(text="🌐 Сменить язык", callback_data="change_lang")]
     ])
     await call.message.answer(
-        f"Теперь ты изучаешь {lang_name}.\nНапиши мне что-нибудь!",
+        f"Теперь ты изучаешь {lang_name}.\nНапиши мне что-нибудь или отправь голосовое!",
         reply_markup=kb
     )
 
@@ -176,14 +156,6 @@ async def text_message_handler(message: types.Message):
     await bot.send_chat_action(message.chat.id, "typing")
     ai_reply = await get_ai_response(user_id, message.text)
     await message.answer(ai_reply)
-    
-    await bot.send_chat_action(message.chat.id, "record_voice")
-    try:
-        voice_fp = await text_to_speech(ai_reply, lang_code)
-        await message.answer_voice(BufferedInputFile(voice_fp.read(), filename="voice.mp3"))
-    except Exception as e:
-        logging.error(f"TTS error: {e}")
-        await message.answer("⚠️ Не удалось создать озвучку для этого языка.")
 
 @dp.message(F.voice)
 async def voice_message_handler(message: types.Message):
@@ -212,7 +184,7 @@ async def voice_message_handler(message: types.Message):
         
         # Отправляем на распознавание в OpenRouter
         transcription = openrouter_client.audio.transcriptions.create(
-            model="openai/whisper-large-v3", # Можно также "openai/whisper-large-v2"
+            model="openai/whisper-large-v3",
             file=mp3_data,
             language=lang_code
         )
@@ -222,9 +194,6 @@ async def voice_message_handler(message: types.Message):
         # Обрабатываем как обычный текст
         ai_reply = await get_ai_response(user_id, user_text)
         await message.answer(ai_reply)
-        
-        voice_fp = await text_to_speech(ai_reply, lang_code)
-        await message.answer_voice(BufferedInputFile(voice_fp.read(), filename="reply.mp3"))
         
     except Exception as e:
         logging.error(f"Voice processing error: {e}")
