@@ -1,6 +1,6 @@
 aiogram==3.13.1
 openai==1.58.1
-gtts==2.5.1
+edge-tts==6.1.12
 pydub==0.25.1
 aiohttp==3.10.5
 python-dotenv==1.0.0
